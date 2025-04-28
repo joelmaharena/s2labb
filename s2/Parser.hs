@@ -32,8 +32,12 @@ matchToken test = tokenPrim showTok updatePos matchFn
     showTok (tok, _) = show tok
 
     -- Uppdatera positionen till positionen för den konsumerade token
-    updatePos :: SourcePos -> PosToken -> [PosToken] -> SourcePos
-    updatePos _ (_tok, pos) _ = pos -- Använd pos från den matchade PosToken
+    updatePos :: SourcePos   -- Parsec’s gamla position (kasta bort)
+              -> PosToken    -- den token du just konsumerat
+              -> [PosToken]  -- resten av tokens
+              -> SourcePos
+    updatePos _ (_, thisPos) []            = thisPos
+    updatePos _ _              ((_, nextPos):_) = nextPos
 
     -- Kör testfunktionen på token-delen av PosToken
     matchFn (tok, _) = test tok

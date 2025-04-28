@@ -4,11 +4,11 @@ module Lexer (Token(..), PosToken, tokens) where -- Exportera PosToken
 import Text.Parsec            (SourcePos, getPosition, try, many1, many, count, noneOf, char, string, digit, hexDigit, eof, newline, optional, skipMany, (<|>))
 import Text.Parsec.String     (Parser)
 import Text.Parsec.Char       (space)
-import Text.Parsec.Combinator (choice)
+import Text.Parsec.Combinator (choice, lookAhead)
 
 -- | Token-typer
 data Token
-  = COLOR | HEX String | FORW | BACK | LEFT | RIGHT | UP | DOWN | REP
+  = COLOR | HEX String | FORW | BACK | LEFT | RIGHT | UP | DOWN | REP 
   | DECIMAL Int | QUOTE | PERIOD | ERROR
   deriving (Show, Eq)
 
@@ -48,7 +48,12 @@ posTok p = do
 
 -- Uppdatera alla tok* funktioner:
 tokColor :: LexerParser PosToken
-tokColor = posTok (COLOR <$ symbol "COLOR")
+tokColor =
+  posTok
+    (  COLOR
+    <$ try (string "COLOR" <* lookAhead space)  -- kräver blanksteg efter "COLOR"
+    <* sc
+    )
 
 tokHex :: LexerParser PosToken
 tokHex = posTok (HEX <$> (symbol "#" *> count 6 hexDigit)) -- Notera ändring till <$>
