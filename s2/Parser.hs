@@ -2,12 +2,12 @@
 {-# LANGUAGE LambdaCase #-}
 module Parser (AST(..), Direction(..), parseProgram) where
 
-import Text.Parsec            (Parsec, try, many, eof, (<|>))
+import Text.Parsec            (Parsec, SourcePos, try, many, eof, (<|>))
 import Text.Parsec.Prim       (tokenPrim)
-import Lexer                  (Token(..))
+import Lexer                  (Token(..), PosToken)
 
 -- | Parser över listor av dina Token
-type Parser a = Parsec [Token] () a
+type Parser a = Parsec [PosToken] () a
 
 -- | AST för språket
 data AST
@@ -25,10 +25,18 @@ data Direction = DirForw | DirBack
 
 -- | Hjälp för att ta ett Token om det matchar test
 matchToken :: (Token -> Maybe x) -> Parser x
-matchToken test = tokenPrim show updatePos matchFn
+matchToken test = tokenPrim showTok updatePos matchFn
   where
-    matchFn t         = test t
-    updatePos pos _ _ = pos
+    -- Visa bara token-delen i felmeddelanden
+    showTok :: PosToken -> String
+    showTok (tok, _) = show tok
+
+    -- Uppdatera positionen till positionen för den konsumerade token
+    updatePos :: SourcePos -> PosToken -> [PosToken] -> SourcePos
+    updatePos _ (_tok, pos) _ = pos -- Använd pos från den matchade PosToken
+
+    -- Kör testfunktionen på token-delen av PosToken
+    matchFn (tok, _) = test tok
 
 -- | Flytta-kommandon
 parseMove :: Parser AST
@@ -99,10 +107,10 @@ parseLoop = try parseLoopQuoted <|> parseLoopUnquoted
 
 -- | Alla möjliga kommandon
 parseCommand :: Parser AST
-parseCommand =  try parseMove
-            <|> try parseTurn
-            <|> try parsePen
-            <|> try parseColor
+parseCommand =  parseMove
+            <|> parseTurn
+            <|> parsePen
+            <|> parseColor
             <|> parseLoop
 
 -- | Hela programmet
