@@ -1,21 +1,27 @@
-module Lexer (Token(..), PosToken, tokens) where
+-- app/Lexer.hs
+module Lexer (Token(..), PosToken, tokens) where -- Exportera PosToken
 
-import Text.Parsec            (SourcePos, getPosition, try, many1, many, count, noneOf, char, string, digit, hexDigit, eof, newline, optional, skipMany, (<|>))
+import Text.Parsec            (SourcePos, getPosition, try, many1, many, count, noneOf, char, string, digit, hexDigit, eof, newline, optional, skipMany, (<|>), satisfy, letter)
 import Text.Parsec.String     (Parser)
-import Text.Parsec.Char       (space) -- Importera space
-import Text.Parsec.Combinator (choice, lookAhead) -- Importera lookAhead
+import Text.Parsec.Char       (space)
+import Text.Parsec.Combinator (choice, lookAhead)
+import Control.Monad (void)
+import Data.Char (toLower) -- Importera toLower
 
--- | Token-typer (med REP Int, OPEN_QUOTE, CLOSE_QUOTE)
+-- | Token-typer
 data Token
-  = COLOR | HEX String | FORW | BACK | LEFT | RIGHT | UP | DOWN
-  | REP_KW -- Nyckelordet REP
-  | DECIMAL Int | OPEN_QUOTE | CLOSE_QUOTE | PERIOD | ERROR
+  = COLOR | HEX String | FORW | BACK | LEFT | RIGHT | UP | DOWN | REP
+  | DECIMAL Int | QUOTE | PERIOD | ERROR
   deriving (Show, Eq)
 
+-- | Typ för token med dess position
 type PosToken = (Token, SourcePos)
-type LexerParser a = Parser a
 
--- | Skippa whitespace och kommentarer
+-- | Parser över strängar (som tidigare)
+type LexerParser a = Parser a -- Behåll gamla namnet internt om du vill
+
+
+-- | Skippa mellanslag, radbrytningar och kommentarer (rader som börjar med ‘%’)
 sc :: Parser ()
 sc = skipMany (space <|> comment)
 
@@ -24,90 +30,106 @@ comment = do
   _ <- char '%'
   _ <- skipMany (noneOf "\n")
   _ <- optional newline
-  return ' '  -- Dummy
+  return ' '  -- dummy-Char så att sc:s typ stämmer
 
--- | Läser strängen s, kräver space efter (med lookAhead), konsumerar sc.
-symbol :: String -> Parser String
-symbol s = try (string s <* sc) -- Borttaget: lookAhead space
+-- | Case-insensitive version av 'char'
+charCI :: Char -> Parser Char
+charCI c = satisfy (\x -> toLower x == toLower c)
 
--- | Konsumerar sc före och efter parsern p.
+-- | Case-insensitive version av 'string'
+stringCI :: String -> Parser String
+stringCI s = try (mapM charCI s) -- Använd try för att kunna backa
+
+-- | Läser exakt strängen s (case-insensitive), och skippar sedan sc
+symbolCI :: String -> Parser String
+symbolCI s = try (stringCI s <* sc)
+
+-- | Läser något med parsern p, och skippar sedan sc
 lexeme :: Parser a -> Parser a
-lexeme p = try (sc *> p <* sc)
+lexeme p = try (p <* sc)
 
--- | Hjälpfunktion för PosToken
+-- | Varje token-parser
+-- Hjälpfunktion för att skapa PosToken
 posTok :: LexerParser Token -> LexerParser PosToken
 posTok p = do
   pos <- getPosition
   tok <- p
   return (tok, pos)
 
--- | Token-parsers enligt den nya strategin
-
--- COLOR kräver space efter
+-- Uppdatera alla tok* funktioner:
 tokColor :: LexerParser PosToken
-tokColor = posTok (COLOR <$ try (string "COLOR" <* sc)) -- Borttaget: lookAhead space
+tokColor = posTok $ try $ do -- Lägg till try här för att kunna backa om lookAhead misslyckas
+    _ <- stringCI "COLOR" -- Matcha COLOR case-insensitive
+    -- Kräv att nästa tecken är whitespace, EOF, eller början på en kommentar
+    lookAhead (eof <|> void space <|> void (char '%'))
+    sc -- Konsumera whitespace/kommentar om det fanns
+    return COLOR
 
--- HEX använder lexeme runt # och siffrorna
 tokHex :: LexerParser PosToken
+-- symbol hanterar inte case-insensitivity, använd lexeme och stringCI
 tokHex = posTok (HEX <$> lexeme (char '#' *> count 6 hexDigit))
 
--- Kommandon använder symbol (kräver space efter)
 tokForw :: LexerParser PosToken
-tokForw = posTok (FORW <$ symbol "FORW")
+tokForw = posTok (FORW <$ symbolCI "FORW") -- Använd symbolCI
 
 tokBack :: LexerParser PosToken
-tokBack = posTok (BACK <$ symbol "BACK")
+tokBack = posTok (BACK <$ symbolCI "BACK") -- Använd symbolCI
 
 tokLeft :: LexerParser PosToken
-tokLeft = posTok (LEFT <$ symbol "LEFT")
+tokLeft = posTok (LEFT <$ symbolCI "LEFT") -- Använd symbolCI
 
 tokRight :: LexerParser PosToken
-tokRight = posTok (RIGHT <$ symbol "RIGHT")
+tokRight = posTok (RIGHT <$ symbolCI "RIGHT") -- Använd symbolCI
 
 tokUp :: LexerParser PosToken
-tokUp = posTok (UP <$ symbol "UP")
+tokUp = posTok (UP <$ symbolCI "UP") -- Använd symbolCI
 
 tokDown :: LexerParser PosToken
-tokDown = posTok (DOWN <$ symbol "DOWN")
+tokDown = posTok (DOWN <$ symbolCI "DOWN") -- Använd symbolCI
 
--- REP använder symbol (kräver space efter)
--- Vi behåller REP Int här, men matchar bara "REP" + space. Siffran blir en separat DECIMAL token.
-tokRepKw :: LexerParser PosToken
-tokRepKw = posTok (REP_KW <$ symbol "REP") -- Ny token REP_KW bara för nyckelordet
+tokRep :: LexerParser PosToken
+tokRep = posTok (REP <$ symbolCI "REP") -- Använd symbolCI
 
--- DECIMAL använder lexeme (konsumerar sc före och efter siffrorna)
+-- Använd lexeme för att konsumera sc efter siffrorna
 tokDecimal :: LexerParser PosToken
-tokDecimal = posTok (DECIMAL . read <$> lexeme (many1 digit))
+tokDecimal = posTok $ do
+  digits <- many1 digit
 
--- OPEN_QUOTE använder lexeme (förlitar sig på att föregående DECIMAL konsumerade sc)
-tokOpenQuote :: LexerParser PosToken
-tokOpenQuote = posTok (OPEN_QUOTE <$ lexeme (char '"'))
+  -- ▸ kontrollera nästa tecken med lookAhead  (OBS: ingen konsumtion!)
+  lookAhead $
+       eof                  -- filen slut här? (Typ: Parser ())
+    <|> void space          -- blank / tab / newline (Typ: Parser Char -> Parser ())
+    <|> void (char '.')     -- punkt (FORW 10.) (Typ: Parser Char -> Parser ())
+    <|> void (char '%')
+  -- inget annat duger → token-varianten faller och tokError tar över
 
--- CLOSE_QUOTE använder lexeme
-tokCloseQuote :: LexerParser PosToken
-tokCloseQuote = posTok (CLOSE_QUOTE <$ lexeme (char '"'))
+  sc                        -- ät upp efterföljande whitespace & kommentarer
+  return (DECIMAL (read digits))
 
--- PERIOD använder lexeme
+tokQuote :: LexerParser PosToken
+-- Använd lexeme för att hantera whitespace runt citattecken
+tokQuote = posTok (QUOTE <$ lexeme (char '"'))
+
 tokPeriod :: LexerParser PosToken
+-- Använd lexeme för att hantera whitespace runt punkt
 tokPeriod = posTok (PERIOD <$ lexeme (char '.'))
 
+-- Definiera whitespaceChars
 whitespaceChars :: String
-whitespaceChars = " \t\n\r%" -- kanske ta bort %
+whitespaceChars = " \t\n\r"
 
--- Felhantering (om nödvändigt, men vi förlitar oss på parsern)
+-- Felhantering (om du har den) behöver också uppdateras
+tokError :: LexerParser PosToken
 tokError = posTok (ERROR <$ lexeme (many1 (noneOf whitespaceChars))) -- Använd lexeme här också
 
--- | Lista med alla token-parsers i rätt ordning
+-- | Lista med alla token-parsers
 singleToken :: LexerParser PosToken
-singleToken = choice $ map try
-  [ tokColor, tokForw, tokBack, tokLeft, tokRight, tokUp, tokDown, tokRepKw -- Nyckelord först
-  , tokHex
-  , tokDecimal -- Efter nyckelord
-  , tokOpenQuote, tokCloseQuote
-  , tokPeriod
-  , tokError
+singleToken = choice $ map try -- Använd try för att undvika problem med <|> ordning
+  [ tokColor, tokHex, tokForw, tokBack, tokLeft, tokRight, tokUp, tokDown
+  , tokRep, tokDecimal, tokQuote, tokPeriod
+  , tokError -- Avkommentera om du vill ha felhantering
   ]
 
--- | Hela token-strömmen
-tokens :: LexerParser [PosToken]
+-- | Slutligen: en lista av PosTokens
+tokens :: LexerParser [PosToken] -- Ändra returtyp
 tokens = sc *> many singleToken <* eof
