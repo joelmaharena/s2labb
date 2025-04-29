@@ -5,6 +5,7 @@ import Text.Parsec            (SourcePos, getPosition, try, many1, many, count, 
 import Text.Parsec.String     (Parser)
 import Text.Parsec.Char       (space)
 import Text.Parsec.Combinator (choice, lookAhead)
+import Control.Monad (void)
 
 -- | Token-typer
 data Token
@@ -79,9 +80,21 @@ tokDown = posTok (DOWN <$ symbol "DOWN")
 tokRep :: LexerParser PosToken
 tokRep = posTok (REP <$ symbol "REP")
 
-tokDecimal :: LexerParser PosToken
 -- Använd lexeme för att konsumera sc efter siffrorna
-tokDecimal = posTok (DECIMAL . read <$> lexeme (many1 digit))
+tokDecimal :: LexerParser PosToken
+tokDecimal = posTok $ do
+  digits <- many1 digit
+
+  -- ▸ kontrollera nästa tecken med lookAhead  (OBS: ingen konsumtion!)
+  lookAhead $
+       eof                  -- filen slut här? (Typ: Parser ())
+    <|> void space          -- blank / tab / newline (Typ: Parser Char -> Parser ())
+    <|> void (char '.')     -- punkt (FORW 10.) (Typ: Parser Char -> Parser ())
+    <|> void (char '%')
+  -- inget annat duger → token-varianten faller och tokError tar över
+
+  sc                        -- ät upp efterföljande whitespace & kommentarer
+  return (DECIMAL (read digits))
 
 tokQuote :: LexerParser PosToken
 tokQuote = posTok (QUOTE <$ symbol "\"")

@@ -2,7 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 module Parser (AST(..), Direction(..), parseProgram) where
 
-import Text.Parsec            (Parsec, SourcePos, try, many, eof, (<|>))
+import Text.Parsec            (getInput, lookAhead, optionMaybe, Parsec, SourcePos, try, many, eof, (<|>))
 import Text.Parsec.Prim       (tokenPrim)
 import Lexer                  (Token(..), PosToken)
 
@@ -88,9 +88,32 @@ parseColor = do
   _   <- matchToken (\t -> if t == PERIOD then Just () else Nothing)
   return (ChangeColor hex)
 
--- | Loop med citattecken: REP n " ... " .
 parseLoopQuoted :: Parser AST
 parseLoopQuoted = do
+  _    <- matchToken (\t -> if t == REP then Just () else Nothing)
+  n    <- matchToken $ \case DECIMAL x -> Just x; _ -> Nothing
+  _    <- matchToken (\t -> if t == QUOTE then Just () else Nothing)
+  body <- parseUntilCloseQuote []
+  return (Loop n body)
+
+-- Hjälpfunktion som samlar kommandon tills stängande citattecken hittas
+parseUntilCloseQuote :: [AST] -> Parser [AST]
+parseUntilCloseQuote cmds = do
+  -- Kolla först om nästa token är ett citattecken
+  input <- getInput
+  if not (null input) && fst (head input) == QUOTE
+    then do
+      -- Konsumera citattecknet och returnera kommandona
+      _ <- matchToken (\t -> if t == QUOTE then Just () else Nothing)
+      return (reverse cmds)
+    else do
+      -- Parsa ett kommando utan att använda try
+      cmd <- parseCommand  -- Fel här kommer att rapporteras på rätt rad
+      parseUntilCloseQuote (cmd:cmds)
+
+-- | Loop med citattecken: REP n " ... " .
+parseLoopQuoted2 :: Parser AST
+parseLoopQuoted2 = do
   _    <- matchToken (\t -> if t == REP then Just () else Nothing)
   n    <- matchToken $ \case DECIMAL x -> Just x; _ -> Nothing
   _    <- matchToken (\t -> if t == QUOTE then Just () else Nothing)
@@ -106,15 +129,37 @@ parseLoopUnquoted = do
   cmd <- parseCommand  -- kommer konsumera sin avslutande PERIOD
   return (Loop n [cmd])
 
+parseLoop2 :: Parser AST
+parseLoop2 = parseLoopQuoted <|> try parseLoopUnquoted
+
 parseLoop :: Parser AST
-parseLoop = try parseLoopQuoted <|> parseLoopUnquoted
+parseLoop = do
+  -- REP n …
+  _ <- matchToken (\t -> if t == REP then Just () else Nothing)
+  n <- matchToken $ \case DECIMAL x -> Just x; _ -> Nothing
+
+  -- Titta men konsumera inte
+  nextIsQuote <- optionMaybe (lookAhead (matchToken (\t -> if t == QUOTE then Just () else Nothing)))
+
+  case nextIsQuote of
+    -- ► Citerad variant
+    Just _ -> do
+      _    <- matchToken (\t -> if t == QUOTE then Just () else Nothing)
+      body <- many parseCommand
+      _    <- matchToken (\t -> if t == QUOTE then Just () else Nothing)
+      return (Loop n body)
+
+    -- ► O-citerad variant
+    Nothing -> do
+      cmd <- parseCommand        -- BACK 1. etc.
+      return (Loop n [cmd])
 
 -- | Alla möjliga kommandon
 parseCommand :: Parser AST
-parseCommand =  parseMove
-            <|> parseTurn
-            <|> parsePen
-            <|> parseColor
+parseCommand =  try parseMove      -- Lägg till try här
+            <|> try parseTurn      -- Och här
+            <|> try parsePen       -- Och här
+            <|> try parseColor     -- Och här
             <|> parseLoop
 
 -- | Hela programmet
