@@ -94,7 +94,10 @@ parseLoop :: Parser AST
 parseLoop = do
   -- REP n …
   _ <- matchToken (\t -> if t == REP then Just () else Nothing)
-  n <- matchToken $ \case DECIMAL x -> Just x; _ -> Nothing
+  n <- matchToken $ \case
+    DECIMAL 0 -> Nothing -- Avvisa noll
+    DECIMAL x -> Just x  -- Acceptera andra decimaltal
+    _         -> Nothing -- Avvisa andra tokens
 
   -- Titta men konsumera inte
   nextIsQuote <- optionMaybe (lookAhead (matchToken (\t -> if t == QUOTE then Just () else Nothing)))
