@@ -50,6 +50,7 @@ parseMove = do
     BACK -> Just DirBack
     _    -> Nothing
   n <- matchToken $ \case
+    DECIMAL 0 -> Nothing 
     DECIMAL x -> Just x
     _         -> Nothing
   _ <- matchToken (\t -> if t == PERIOD then Just () else Nothing)
@@ -63,6 +64,7 @@ parseTurn = do
     RIGHT -> Just (-1)
     _     -> Nothing
   n <- matchToken $ \case
+    DECIMAL 0 -> Nothing 
     DECIMAL x -> Just x
     _         -> Nothing
   _ <- matchToken (\t -> if t == PERIOD then Just () else Nothing)
@@ -87,50 +89,6 @@ parseColor = do
     _        -> Nothing
   _   <- matchToken (\t -> if t == PERIOD then Just () else Nothing)
   return (ChangeColor hex)
-
-parseLoopQuoted :: Parser AST
-parseLoopQuoted = do
-  _    <- matchToken (\t -> if t == REP then Just () else Nothing)
-  n    <- matchToken $ \case DECIMAL x -> Just x; _ -> Nothing
-  _    <- matchToken (\t -> if t == QUOTE then Just () else Nothing)
-  body <- parseUntilCloseQuote []
-  return (Loop n body)
-
--- Hjälpfunktion som samlar kommandon tills stängande citattecken hittas
-parseUntilCloseQuote :: [AST] -> Parser [AST]
-parseUntilCloseQuote cmds = do
-  -- Kolla först om nästa token är ett citattecken
-  input <- getInput
-  if not (null input) && fst (head input) == QUOTE
-    then do
-      -- Konsumera citattecknet och returnera kommandona
-      _ <- matchToken (\t -> if t == QUOTE then Just () else Nothing)
-      return (reverse cmds)
-    else do
-      -- Parsa ett kommando utan att använda try
-      cmd <- parseCommand  -- Fel här kommer att rapporteras på rätt rad
-      parseUntilCloseQuote (cmd:cmds)
-
--- | Loop med citattecken: REP n " ... " .
-parseLoopQuoted2 :: Parser AST
-parseLoopQuoted2 = do
-  _    <- matchToken (\t -> if t == REP then Just () else Nothing)
-  n    <- matchToken $ \case DECIMAL x -> Just x; _ -> Nothing
-  _    <- matchToken (\t -> if t == QUOTE then Just () else Nothing)
-  body <- many parseCommand
-  _    <- matchToken (\t -> if t == QUOTE then Just () else Nothing)
-  return (Loop n body)
-
--- | Loop utan citattecken (endast en enda kommando i kroppen)
-parseLoopUnquoted :: Parser AST
-parseLoopUnquoted = do
-  _   <- matchToken (\t -> if t == REP then Just () else Nothing)
-  n   <- matchToken $ \case DECIMAL x -> Just x; _ -> Nothing
-  cmd <- parseCommand  -- kommer konsumera sin avslutande PERIOD
-  return (Loop n [cmd])
-
-parseLoop2 :: Parser AST
-parseLoop2 = parseLoopQuoted <|> try parseLoopUnquoted
 
 parseLoop :: Parser AST
 parseLoop = do
